@@ -1,0 +1,17 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Secrets
+.env
+servicesAccountKey.json
+*.jks
+*.keystore
+*.pem
