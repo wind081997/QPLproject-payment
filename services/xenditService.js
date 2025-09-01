@@ -4,12 +4,12 @@ const xendit = new Xendit({
 });
 
 console.log('🔍 Xendit package loaded:', !!Xendit);
-console.log(' Xendit constructor:', typeof Xendit);
+console.log('🔍 Xendit constructor:', typeof Xendit);
 
 console.log('🔍 Xendit instance created:', !!xendit);
 console.log('🔍 Xendit instance properties:', Object.keys(xendit || {}));
 
-// ✅ DEBUG: Let's see what's actually available
+// ✅ DEFINE Invoice variable
 const Invoice = xendit.Invoice;
 console.log('🔍 Invoice class available:', !!Invoice);
 console.log('🔍 Invoice class methods:', Invoice ? Object.keys(Invoice.prototype || {}) : 'UNDEFINED');
@@ -66,7 +66,14 @@ class XenditService {
                 invoice = await Invoice.createInvoice({
                     externalID: orderData._id.toString(),
                     amount: orderData.grandTotal,
-                    description: `Order ${orderData._id}`
+                    description: `Order ${orderData._id}`,
+                    successRedirectURL: `${process.env.PAYMENT_SUCCESS_URL}?orderId=${orderData._id}`,
+                    failureRedirectURL: `${process.env.PAYMENT_CANCEL_URL}?orderId=${orderData._id}`,
+                    customer: {
+                        given_names: "Customer",
+                        email: "customer@example.com"
+                    },
+                    invoiceDuration: 86400,
                 });
             }
             // ✅ METHOD 2: Try Invoice.prototype.createInvoice (instance method)
@@ -76,7 +83,14 @@ class XenditService {
                 invoice = await invoiceInstance.createInvoice({
                     externalID: orderData._id.toString(),
                     amount: orderData.grandTotal,
-                    description: `Order ${orderData._id}`
+                    description: `Order ${orderData._id}`,
+                    successRedirectURL: `${process.env.PAYMENT_SUCCESS_URL}?orderId=${orderData._id}`,
+                    failureRedirectURL: `${process.env.PAYMENT_CANCEL_URL}?orderId=${orderData._id}`,
+                    customer: {
+                        given_names: "Customer",
+                        email: "customer@example.com"
+                    },
+                    invoiceDuration: 86400,
                 });
             }
             // ✅ METHOD 3: Try xendit.invoices.create (direct method)
@@ -85,7 +99,14 @@ class XenditService {
                 invoice = await xendit.invoices.create({
                     external_id: orderData._id.toString(),
                     amount: orderData.grandTotal,
-                    description: `Order ${orderData._id}`
+                    description: `Order ${orderData._id}`,
+                    success_redirect_url: `${process.env.PAYMENT_SUCCESS_URL}?orderId=${orderData._id}`,
+                    failure_redirect_url: `${process.env.PAYMENT_CANCEL_URL}?orderId=${orderData._id}`,
+                    customer: {
+                        given_names: "Customer",
+                        email: "customer@example.com"
+                    },
+                    invoice_duration: 86400,
                 });
             }
             // ✅ METHOD 4: Try xendit.Invoice.create (alternative structure)
@@ -94,7 +115,9 @@ class XenditService {
                 invoice = await xendit.Invoice.create({
                     external_id: orderData._id.toString(),
                     amount: orderData.grandTotal,
-                    description: `Order ${orderData._id}`
+                    description: `Order ${orderData._id}`,
+                    success_redirect_url: `${process.env.PAYMENT_SUCCESS_URL}?orderId=${orderData._id}`,
+                    failure_redirect_url: `${process.env.PAYMENT_CANCEL_URL}?orderId=${orderData._id}`,
                 });
             }
             else {
@@ -110,6 +133,7 @@ class XenditService {
                 );
             }
 
+            console.log('✅ Invoice created successfully:', invoice.id);
             return invoice;
         } catch (error) {
             console.error('Error creating Xendit invoice:', error);
