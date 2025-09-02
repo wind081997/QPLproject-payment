@@ -1,6 +1,8 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const webhookController = require('../controllers/webhookController');
 
-router.post("/xendit", webhookController.handleXenditWebhook);
+// ✅ This should match what Xendit is trying to POST to
+router.post('/xendit', webhookController.handleWebhook);
 
 module.exports = router;
