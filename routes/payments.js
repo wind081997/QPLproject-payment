@@ -1,12 +1,10 @@
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 const paymentController = require('../controllers/paymentController');
 
-// ✅ ADD THIS MISSING ROUTE
+// ✅ Make sure these routes exist
 router.post("/create-pending-invoice", paymentController.createPendingInvoice);
-
-// ... existing routes ...
-router.post("/create-invoice", paymentController.createInvoice);
 router.post("/create-order-after-payment", paymentController.createOrderAfterPayment);
-router.get("/check-status/:tempOrderId", paymentController.checkPaymentStatus);
+router.get("/check-status/:tempOrderId", paymentController.checkPaymentStatus); // ✅ This was missing!
 
 module.exports = router;

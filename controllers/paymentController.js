@@ -1,96 +1,10 @@
+const mongoose = require('mongoose');
 const Order = require('../models/Orders');
 const Restaurant = require('../models/Restaurant');
 const Transaction = require('../models/Transaction');
 const XenditService = require('../services/xenditService');
-const mongoose = require('mongoose');
 
 module.exports = {
-    // ✅ ADD THIS MISSING METHOD - REQUIRED BY ROUTES
-    createPendingInvoice: async (req, res) => {
-        try {
-            console.log('createPendingInvoice body:', req.body);
-            
-            // Generate temp order ID
-            const tempOrderId = new mongoose.Types.ObjectId();
-            
-            // ✅ FIX: Convert cartItems to orderItems format
-            const orderItems = req.body.cartItems.map(item => ({
-                foodId: item.foodId,
-                quantity: item.quantity,
-                price: parseFloat(item.price),
-                additives: item.additives || [],
-                instructions: item.instructions || ''
-            }));
-            
-            // Create pending order data with ALL required fields
-            const pendingOrderData = {
-                _id: tempOrderId,
-                userId: req.body.userId,
-                orderItems: orderItems, // ✅ FIX: Use converted orderItems
-                orderTotal: parseFloat(req.body.orderTotal),
-                deliveryFee: parseFloat(req.body.deliveryFee),
-                grandTotal: parseFloat(req.body.grandTotal),
-                deliveryAddress: req.body.deliveryAddress,
-                restaurantAddress: req.body.restaurantAddress || "Address not available",
-                restaurantCoords: req.body.restaurantCoords || [],
-                recipientCoords: req.body.recipientCoords || [],
-                paymentMethod: req.body.paymentMethod || "Online",
-                restaurantId: req.body.restaurantId,
-            };
-
-            console.log('About to call Xendit service with order:', pendingOrderData);
-
-            // Create Xendit invoice
-            const invoice = await XenditService.createInvoiceWithSplit(pendingOrderData);
-            
-            console.log('✅ Invoice created successfully:', invoice.id);
-
-            res.status(200).json({
-                status: true,
-                invoiceUrl: invoice.invoice_url,
-                invoiceId: invoice.id,
-                tempOrderId: tempOrderId.toString()
-            });
-        } catch (error) {
-            console.error('Create pending invoice error:', error);
-            res.status(500).json({
-                status: false,
-                message: error.message
-            });
-        }
-    },
-
-    // ✅ ADD THIS MISSING METHOD - REQUIRED BY ROUTES
-    checkPaymentStatus: async (req, res) => {
-        try {
-            const { tempOrderId } = req.params;
-            
-            console.log('🔍 Checking payment status for:', tempOrderId);
-            
-            // Check if payment status exists in global store
-            if (global.paymentStatusStore && global.paymentStatusStore.has(tempOrderId)) {
-                const status = global.paymentStatusStore.get(tempOrderId);
-                console.log('✅ Payment status found:', status);
-                res.status(200).json({
-                    status: true,
-                    paymentStatus: status
-                });
-            } else {
-                console.log('❌ Payment status not found for:', tempOrderId);
-                res.status(404).json({
-                    status: false,
-                    message: "Payment status not found"
-                });
-            }
-        } catch (error) {
-            console.error('Check payment status error:', error);
-            res.status(500).json({
-                status: false,
-                message: error.message
-            });
-        }
-    },
-
     createInvoice: async (req, res) => {
         try {
             console.log('createInvoice body:', req.body);
@@ -129,14 +43,16 @@ module.exports = {
             await order.save();
 
             // Create transaction record
-            await Transaction.create({
+            const transaction = await Transaction.create({
+                userId: order.userId,
                 providerId: order.restaurantId,
                 orderId: order._id,
                 amount: order.grandTotal,
-                commission: commissionAmount,
-                source: paymentSource,
-                status: 'pending',
+                commission: 0,
+                source: 'online',
+                status: 'completed',
                 xenditInvoiceId: invoice.id,
+                paymentMethod: 'Online',
                 weekEnding: getWeekEnding()
             });
 
@@ -154,40 +70,90 @@ module.exports = {
         }
     },
 
+    // ✅ ADD MISSING METHOD
+    createPendingInvoice: async (req, res) => {
+        try {
+            console.log('createPendingInvoice body:', req.body);
+            
+            // Generate a temporary order ID
+            const tempOrderId = new mongoose.Types.ObjectId();
+            
+            // Format cart items into order items
+            const orderItems = req.body.cartItems.map(item => ({
+                foodId: item.foodId,
+                quantity: item.quantity,
+                price: item.price,
+                additives: item.additives || [],
+                instructions: item.instructions || ''
+            }));
+
+            // Create temporary order data (not saved to DB yet)
+            const orderData = {
+                _id: tempOrderId,
+                userId: req.body.userId,
+                orderItems: orderItems,
+                orderTotal: req.body.orderTotal,
+                deliveryFee: req.body.deliveryFee,
+                grandTotal: req.body.grandTotal,
+                deliveryAddress: req.body.deliveryAddress,
+                restaurantAddress: req.body.restaurantAddress || "Address not available",
+                restaurantCoords: req.body.restaurantCoords || [],
+                recipientCoords: req.body.recipientCoords || [],
+                paymentMethod: 'Online',
+                restaurantId: req.body.restaurantId
+            };
+
+            console.log('About to call Xendit service with order:', orderData);
+
+            // Create Xendit invoice
+            const invoice = await XenditService.createInvoiceWithSplit(orderData);
+
+            res.status(200).json({
+                status: true,
+                invoiceUrl: invoice.invoice_url,
+                invoiceId: invoice.id,
+                tempOrderId: tempOrderId.toString()
+            });
+        } catch (error) {
+            console.error('Create pending invoice error:', error);
+            res.status(500).json({
+                status: false,
+                message: error.message
+            });
+        }
+    },
+
+    // ✅ ADD MISSING METHOD
     createOrderAfterPayment: async (req, res) => {
         try {
             const { invoiceId, tempOrderId, paymentData } = req.body;
             
-            console.log('🔍 createOrderAfterPayment received data:', { 
-                invoiceId, 
-                tempOrderId, 
+            console.log('🔍 createOrderAfterPayment received data:', {
+                invoiceId,
+                tempOrderId,
                 paymentData,
                 paymentDataKeys: Object.keys(paymentData || {})
             });
-            
-            // ✅ DEBUG: Check what's in the global store
-            console.log('🔍 Global payment status store:', global.paymentStatusStore);
-            console.log('🔍 Looking for tempOrderId:', tempOrderId);
-            console.log('🔍 Available keys in store:', Array.from(global.paymentStatusStore?.keys() || []));
-            
-            // ✅ CRITICAL: Verify payment was actually successful via webhook
-            if (!global.paymentStatusStore || !global.paymentStatusStore.has(tempOrderId)) {
-                console.log('❌ Payment not found in store. Store exists:', !!global.paymentStatusStore);
-                console.log('❌ Store size:', global.paymentStatusStore?.size || 0);
+
+            if (!invoiceId || !tempOrderId) {
                 return res.status(400).json({
                     status: false,
-                    message: "Payment not confirmed. Please wait or contact support."
+                    message: "Missing invoiceId or tempOrderId"
                 });
             }
 
+            console.log('🔍 Global payment status store:', global.paymentStatusStore);
+            console.log('🔍 Looking for tempOrderId:', tempOrderId);
+            console.log('🔍 Available keys in store:', Array.from(global.paymentStatusStore.keys()));
+
+            // Verify payment status from webhook store
             const paymentStatus = global.paymentStatusStore.get(tempOrderId);
             console.log('✅ Payment status found:', paymentStatus);
-            
-            if (paymentStatus.status !== 'PAID') {
-                console.log('❌ Payment not completed. Status:', paymentStatus.status);
+
+            if (!paymentStatus || paymentStatus.status !== 'PAID') {
                 return res.status(400).json({
                     status: false,
-                    message: "Payment not completed. Status: " + paymentStatus.status
+                    message: "Payment not confirmed. Please wait or contact support."
                 });
             }
 
@@ -246,6 +212,7 @@ module.exports = {
             // Create transaction record
             console.log('✅ Creating transaction record...');
             const transaction = await Transaction.create({
+                userId: order.userId, // ✅ ADD THIS - required field
                 providerId: order.restaurantId,
                 orderId: order._id,
                 amount: order.grandTotal,
@@ -253,10 +220,23 @@ module.exports = {
                 source: 'online',
                 status: 'completed',
                 xenditInvoiceId: invoiceId,
+                paymentMethod: paymentStatus.paymentMethod || 'Online', // ✅ ADD THIS - required field
                 weekEnding: getWeekEnding()
             });
 
             console.log('✅ Transaction created successfully:', transaction._id);
+
+            // ✅ ADD THIS: Update transaction with webhook data
+            const webhookData = global.paymentStatusStore.get(tempOrderId);
+            if (webhookData && webhookData.webhookData) {
+                await Transaction.findByIdAndUpdate(transaction._id, {
+                    'xenditData.payment_id': webhookData.webhookData.payment_id,
+                    'xenditData.payment_method_id': webhookData.webhookData.payment_method_id,
+                    'xenditData.ewallet_type': webhookData.webhookData.ewallet_type,
+                    'xenditData.merchant_name': webhookData.webhookData.merchant_name
+                });
+                console.log('✅ Transaction updated with webhook data');
+            }
 
             // ✅ Mark payment as processed
             global.paymentStatusStore.delete(tempOrderId);
@@ -270,6 +250,36 @@ module.exports = {
             });
         } catch (error) {
             console.error('❌ Create order after payment error:', error);
+            res.status(500).json({
+                status: false,
+                message: error.message
+            });
+        }
+    },
+
+    // ✅ ADD MISSING METHOD
+    checkPaymentStatus: async (req, res) => {
+        try {
+            const { tempOrderId } = req.params;
+            console.log('🔍 Checking payment status for:', tempOrderId);
+            
+            const paymentStatus = global.paymentStatusStore.get(tempOrderId);
+            
+            if (paymentStatus && paymentStatus.status === 'PAID') {
+                console.log('✅ Payment status found:', paymentStatus);
+                res.status(200).json({
+                    isPaid: true,
+                    status: paymentStatus.status,
+                    paymentMethod: paymentStatus.paymentMethod
+                });
+            } else {
+                console.log('❌ Payment status not found for:', tempOrderId);
+                res.status(200).json({
+                    isPaid: false
+                });
+            }
+        } catch (error) {
+            console.error('❌ Check payment status error:', error);
             res.status(500).json({
                 status: false,
                 message: error.message

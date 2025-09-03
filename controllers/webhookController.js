@@ -52,8 +52,31 @@ async function handleInvoicePaid(data) {
             invoiceId: data.id,
             paymentMethod: data.payment_method,
             amount: data.amount,
-            isConfirmed: true
+            isConfirmed: true,
+            webhookData: {
+                payment_id: data.payment_id,
+                payment_method_id: data.payment_method_id,
+                ewallet_type: data.ewallet_type,
+                merchant_name: data.merchant_name
+            }
         });
+
+        // ✅ ADD THIS: Also store in database for persistence
+        try {
+            await Transaction.findOneAndUpdate(
+                { xenditInvoiceId: data.id },
+                { 
+                    'xenditData.payment_id': data.payment_id,
+                    'xenditData.payment_method_id': data.payment_method_id,
+                    'xenditData.ewallet_type': data.ewallet_type,
+                    'xenditData.merchant_name': data.merchant_name
+                },
+                { upsert: true }
+            );
+            console.log('✅ Webhook data stored in database for persistence');
+        } catch (error) {
+            console.log('⚠️ Could not store webhook data in database:', error.message);
+        }
 
         console.log('✅ Webhook: Payment status stored in global store');
         console.log('✅ Store size after storing:', global.paymentStatusStore.size);
@@ -64,6 +87,15 @@ async function handleInvoicePaid(data) {
             global.paymentStatusStore.delete(data.external_id);
             console.log('✅ Cleaned up payment status for:', data.external_id);
         }, 15 * 60 * 1000);
+
+        // ✅ Also update the Order if it exists
+        if (transaction.orderId) {
+            await Order.findByIdAndUpdate(
+                transaction.orderId,
+                { paymentStatus: 'PAID' } // ✅ CHANGE FROM 'Completed' TO 'PAID'
+            );
+            console.log('✅ Webhook: Order payment status updated');
+        }
 
         console.log('✅ Webhook: Payment status stored successfully');
     } catch (error) {
