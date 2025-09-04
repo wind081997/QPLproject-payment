@@ -2,28 +2,58 @@ const crypto = require('crypto');
 const Order = require('../models/Orders');
 const Transaction = require('../models/Transaction');
 const Restaurant = require('../models/Restaurant');
+const FailedWebhook = require('../models/FailedWebhook');
+const fetch = require('node-fetch');
 
 // ✅ Initialize global payment status store
 if (!global.paymentStatusStore) {
     global.paymentStatusStore = new Map();
 }
 
-// ✅ Main webhook handler
-const handleWebhook = async (req, res) => {
+// ✅ ADD THIS: Enhanced webhook failure handling
+const handleWebhookFailure = async (data, error) => {
+    console.error('❌ Webhook processing failed:', error);
+    
+    try {
+        // Store failed webhook attempt
+        await FailedWebhook.create({
+            xenditInvoiceId: data.id,
+            externalId: data.external_id,
+            webhookData: data,
+            error: error.message,
+            timestamp: new Date(),
+            retryCount: 0
+        });
+        
+        // Log for manual investigation
+        console.error('🚨 CRITICAL: Webhook failed for payment:', {
+            invoiceId: data.id,
+            amount: data.amount,
+            userId: data.user_id,
+            error: error.message
+        });
+        
+    } catch (dbError) {
+        console.error('❌ Failed to log webhook failure:', dbError);
+    }
+};
+
+// ✅ Main webhook handler - RENAME to handleInvoicePaid
+const handleInvoicePaid = async (req, res) => {
     try {
         console.log('🔔 Webhook received:', req.body);
         
-        // ✅ FIX: Handle Xendit's actual webhook format
+        // ✅ Handle Xendit's actual webhook format
         const webhookData = req.body;
         
         // ✅ Check if this is a payment success webhook
         if (webhookData.status === 'PAID' && webhookData.external_id) {
             console.log('✅ Processing payment success webhook');
-            await handleInvoicePaid(webhookData);
+            await processInvoicePaid(webhookData);
         } else if (webhookData.event === 'invoice.paid') {
             // ✅ Also handle the event-based format
             console.log('✅ Processing invoice.paid event');
-            await handleInvoicePaid(webhookData.data || webhookData);
+            await processInvoicePaid(webhookData.data || webhookData);
         } else {
             console.log('⚠️ Unknown webhook format:', {
                 status: webhookData.status,
@@ -36,16 +66,21 @@ const handleWebhook = async (req, res) => {
         res.status(200).json({ status: 'OK' });
     } catch (error) {
         console.error('❌ Webhook error:', error);
+        
+        // ✅ Handle webhook failure
+        await handleWebhookFailure(req.body, error);
+        
         // ✅ Still respond with 200 to prevent retries
         res.status(200).json({ status: 'Error processed' });
     }
 };
 
-async function handleInvoicePaid(data) {
+// ✅ ADD THIS: Rename the function to processInvoicePaid for clarity
+async function processInvoicePaid(data) {
     try {
         console.log('✅ Webhook: Processing payment success for:', data.external_id);
         
-        // ✅ Store payment success status
+        // ✅ Store payment success status with enhanced data
         global.paymentStatusStore.set(data.external_id, {
             status: 'PAID',
             timestamp: new Date(),
@@ -61,7 +96,7 @@ async function handleInvoicePaid(data) {
             }
         });
 
-        // ✅ ADD THIS: Also store in database for persistence
+        // ✅ Also store in database for persistence
         try {
             await Transaction.findOneAndUpdate(
                 { xenditInvoiceId: data.id },
@@ -88,21 +123,119 @@ async function handleInvoicePaid(data) {
             console.log('✅ Cleaned up payment status for:', data.external_id);
         }, 15 * 60 * 1000);
 
-        // ✅ Also update the Order if it exists
-        if (transaction.orderId) {
-            await Order.findByIdAndUpdate(
-                transaction.orderId,
-                { paymentStatus: 'PAID' } // ✅ CHANGE FROM 'Completed' TO 'PAID'
-            );
-            console.log('✅ Webhook: Order payment status updated');
-        }
-
         console.log('✅ Webhook: Payment status stored successfully');
     } catch (error) {
         console.error('❌ Webhook: Error handling invoice paid:', error);
+        throw error; // Re-throw to be caught by the main handler
     }
 }
 
+// ✅ ENHANCED: Production-ready webhook health check
+const checkWebhookHealth = async (req, res) => {
+    try {
+        console.log('🔍 Webhook health check requested');
+        
+        // Check if webhook processing is working
+        const isHealthy = global.paymentStatusStore && 
+                         typeof global.paymentStatusStore.get === 'function';
+        
+        if (isHealthy) {
+            // ✅ ADD THIS: Test if webhook endpoint is actually reachable
+            const webhookUrl = process.env.WEBHOOK_URL || 'http://localhost:8000/api/webhooks/xendit';
+            
+            try {
+                // Test if webhook endpoint responds
+                const testResponse = await fetch(webhookUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'WebhookHealthCheck/1.0'
+                    },
+                    body: JSON.stringify({
+                        test: true,
+                        timestamp: new Date().toISOString(),
+                        healthCheck: true
+                    }),
+                    timeout: 5000 // 5 second timeout
+                });
+                
+                if (testResponse.ok) {
+                    res.status(200).json({
+                        success: true,
+                        message: 'Webhook system is healthy and reachable',
+                        status: 'active',
+                        webhookUrl: webhookUrl,
+                        timestamp: new Date().toISOString()
+                    });
+                } else {
+                    res.status(503).json({
+                        success: false,
+                        message: 'Webhook endpoint not responding correctly',
+                        status: 'unreachable',
+                        webhookUrl: webhookUrl,
+                        timestamp: new Date().toISOString()
+                    });
+                }
+            } catch (fetchError) {
+                console.error('❌ Webhook endpoint test failed:', fetchError);
+                res.status(503).json({
+                    success: false,
+                    message: 'Webhook endpoint is not reachable',
+                    status: 'unreachable',
+                    error: fetchError.message,
+                    timestamp: new Date().toISOString()
+                });
+            }
+        } else {
+            res.status(503).json({
+                success: false,
+                message: 'Webhook system is not healthy',
+                status: 'inactive',
+                timestamp: new Date().toISOString()
+            });
+        }
+    } catch (error) {
+        console.error('❌ Webhook health check failed:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Webhook health check failed',
+            status: 'error',
+            timestamp: new Date().toISOString()
+        });
+    }
+};
+
+// ✅ ADD THIS: Handle test webhook requests
+const handleTestWebhook = async (req, res) => {
+    try {
+        const { test, healthCheck } = req.body;
+        
+        if (test && healthCheck) {
+            console.log('✅ Test webhook received - system is healthy');
+            res.status(200).json({
+                success: true,
+                message: 'Test webhook received successfully',
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            // Handle regular webhook
+            await handleInvoicePaid(req, res);
+        }
+    } catch (error) {
+        console.error('❌ Test webhook error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Test webhook failed',
+            error: error.message
+        });
+    }
+};
+
+// ✅ FIX: Export ALL functions properly
 module.exports = {
-    handleWebhook
+    handleInvoicePaid,      // ✅ Main webhook handler
+    checkWebhookHealth,     // ✅ Health check
+    handleWebhookFailure,   // ✅ Failure handler
+    processInvoicePaid,     // ✅ Processing function
+    handleTestWebhook       // ✅ Test webhook handler
 };

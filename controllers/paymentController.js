@@ -211,22 +211,34 @@ module.exports = {
             
             // Create transaction record
             console.log('✅ Creating transaction record...');
-            const transaction = await Transaction.create({
-                userId: order.userId, // ✅ ADD THIS - required field
-                providerId: order.restaurantId,
-                orderId: order._id,
-                amount: order.grandTotal,
-                commission: 0,
-                source: 'online',
-                status: 'completed',
-                xenditInvoiceId: invoiceId,
-                paymentMethod: paymentStatus.paymentMethod || 'Online', // ✅ ADD THIS - required field
-                weekEnding: getWeekEnding()
-            });
+            // ✅ FIX: Use findOneAndUpdate with upsert instead of create
+            const transaction = await Transaction.findOneAndUpdate(
+                { xenditInvoiceId: invoiceId }, // Find by invoice ID
+                {
+                    // ✅ Make sure all these fields match your schema
+                    userId: orderData.userId,                    // ✅ Required field
+                    providerId: orderData.restaurantId,          // ✅ Required field
+                    orderId: savedOrder._id,                     // ✅ Required field
+                    amount: orderData.grandTotal,                // ✅ Required field
+                    commission: 0,
+                    source: 'online',
+                    paymentStatus: 'PAID',                       // ✅ Use correct enum value
+                    xenditInvoiceId: invoiceId,                  // ✅ Required field
+                    paymentMethod: paymentStatus.paymentMethod || 'Online', // ✅ Required field
+                    weekEnding: getWeekEnding(),
+                    currency: 'PHP',
+                    transactionDate: new Date()
+                },
+                { 
+                    upsert: true,        // ✅ Create if doesn't exist, update if exists
+                    new: true,           // ✅ Return the updated document
+                    setDefaultsOnInsert: true // ✅ Set default values on insert
+                }
+            );
 
-            console.log('✅ Transaction created successfully:', transaction._id);
+            console.log('✅ Transaction created/updated successfully:', transaction._id);
 
-            // ✅ ADD THIS: Update transaction with webhook data
+            // ✅ FIX: Update transaction with webhook data
             const webhookData = global.paymentStatusStore.get(tempOrderId);
             if (webhookData && webhookData.webhookData) {
                 await Transaction.findByIdAndUpdate(transaction._id, {
@@ -238,18 +250,39 @@ module.exports = {
                 console.log('✅ Transaction updated with webhook data');
             }
 
-            // ✅ Mark payment as processed
+            // ✅ FIX: Mark payment as processed
             global.paymentStatusStore.delete(tempOrderId);
             console.log('✅ Payment status cleaned up from store');
 
+            // ✅ FIX: Return success response
             res.status(200).json({
                 status: true,
                 message: "Order created successfully after payment verification",
                 orderId: savedOrder._id,
-                transactionId: transaction._id
+                transactionId: transaction._id,
+                invoiceId: invoiceId
             });
+
         } catch (error) {
             console.error('❌ Create order after payment error:', error);
+            
+            // ✅ FIX: Better error handling
+            if (error.code === 11000) {
+                console.log('⚠️ Duplicate transaction detected, attempting to update...');
+                
+                try {
+                    const existingTransaction = await Transaction.findOne({ xenditInvoiceId: invoiceId });
+                    if (existingTransaction) {
+                        console.log('✅ Found existing transaction, updating payment status...');
+                        await Transaction.findByIdAndUpdate(existingTransaction._id, {
+                            paymentStatus: 'PAID'
+                        });
+                    }
+                } catch (updateError) {
+                    console.error('❌ Failed to update existing transaction:', updateError);
+                }
+            }
+            
             res.status(500).json({
                 status: false,
                 message: error.message
