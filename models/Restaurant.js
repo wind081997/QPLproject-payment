@@ -19,11 +19,24 @@ const restaurantSchema = new mongoose.Schema({
     },
 
     ///added -wj testing
-    xenditSubAccountId: String,
+    xenditSubAccountId: { type: String, default: null },
+    xenditAccountStatus: { 
+      type: String, 
+      enum: ['pending', 'active', 'suspended'], 
+      default: 'pending' 
+    },
+    payoutMethod: {
+      type: { type: String, enum: ['bank_account', 'ewallet'], default: 'bank_account' },
+      bankCode: { type: String, default: null },
+      accountNumber: { type: String, default: null },
+      accountHolderName: { type: String, default: null },
+      ewalletType: { type: String, enum: ['GCASH', 'PAYMAYA'], default: null },
+      ewalletNumber: { type: String, default: null }
+    },
     pendingRemit: {
-        amount: { type: Number, default: 0 },
-        invoiceUrl: String,
-        dueDate: Date
+      invoiceId: { type: String, default: null },
+      amount: { type: Number, default: 0 },
+      dueDate: { type: Date, default: null }
     },
 
     
